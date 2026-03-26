@@ -1,153 +1,196 @@
 <?php
 /**
- * Управление пользователями (Админ-панель)
- * Система оценки успеваемости ПолесГУ
+ * Страница управления пользователями (только для администраторов)
  */
+require_once '../../config/db_config.php';
+require_once '../../config/app_config.php';
 
-session_start();
-require_once __DIR__ . '/../../config/app_config.php';
-requireAdmin(); // Только для администраторов
+checkAdmin();
 
-$user = getCurrentUser();
+$pageTitle = 'Пользователи системы';
+$success = '';
+$error = '';
 
-// Получение списка пользователей
-$users = dbFetchAll("
-    SELECT 
-        id,
-        username,
-        full_name,
-        email,
-        role,
-        created_at,
-        updated_at
-    FROM users
-    ORDER BY 
-        CASE WHEN role = 'admin' THEN 0 ELSE 1 END,
-        last_name, first_name
-", []);
+// Обработка добавления пользователя
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_user'])) {
+    try {
+        $pdo = getDBConnection();
+        $stmt = $pdo->prepare("
+            INSERT INTO users (username, password, full_name, role, email)
+            VALUES (?, ?, ?, ?, ?)
+        ");
+        $stmt->execute([
+            $_POST['username'],
+            $_POST['password'],
+            $_POST['full_name'],
+            $_POST['role'],
+            $_POST['email'] ?? null
+        ]);
+        $success = 'Пользователь успешно добавлен';
+    } catch (PDOException $e) {
+        if ($e->getCode() == 23000) {
+            $error = 'Пользователь с таким логином уже существует';
+        } else {
+            $error = 'Ошибка при добавлении: ' . $e->getMessage();
+        }
+    }
+}
 
-include BASE_PATH . '/includes/header.php';
-include BASE_PATH . '/includes/sidebar.php';
+// Обработка удаления
+if (isset($_GET['delete']) && $_SESSION['user_role'] === ROLE_ADMIN) {
+    try {
+        $pdo = getDBConnection();
+        // Нельзя удалить самого себя
+        if ($_GET['delete'] != $_SESSION['user_id']) {
+            $stmt = $pdo->prepare("DELETE FROM users WHERE id = ?");
+            $stmt->execute([$_GET['delete']]);
+            $success = 'Пользователь успешно удален';
+        } else {
+            $error = 'Нельзя удалить свою собственную учетную запись';
+        }
+    } catch (PDOException $e) {
+        $error = 'Ошибка при удалении: ' . $e->getMessage();
+    }
+}
+
+// Получение данных
+try {
+    $pdo = getDBConnection();
+    $usersStmt = $pdo->query("SELECT * FROM users ORDER BY created_at DESC");
+    $users = $usersStmt->fetchAll();
+    
+} catch (PDOException $e) {
+    $error = 'Ошибка получения данных: ' . $e->getMessage();
+}
+
+include '../../includes/header.php';
 ?>
 
-<div class="main-content">
-    <div class="top-bar">
-        <div class="breadcrumb">
-            <h1><i class="fas fa-users-cog"></i> Пользователи системы</h1>
-        </div>
-        <div class="actions">
-            <a href="user_add.php" class="btn btn-primary">
-                <i class="fas fa-plus"></i> Добавить пользователя
-            </a>
-        </div>
-    </div>
+<?php if ($success): ?>
+    <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
+<?php endif; ?>
 
-    <!-- Статистика -->
-    <div class="stats-grid" style="margin-bottom: 24px;">
-        <div class="stat-card stat-primary">
-            <div class="stat-icon"><i class="fas fa-users"></i></div>
-            <div class="stat-details">
-                <h3><?php echo count($users); ?></h3>
-                <p>Всего пользователей</p>
-            </div>
-        </div>
-        <div class="stat-card stat-warning">
-            <div class="stat-icon"><i class="fas fa-user-shield"></i></div>
-            <div class="stat-details">
-                <h3><?php echo count(array_filter($users, fn($u) => $u['role'] === 'admin')); ?></h3>
-                <p>Администраторов</p>
-            </div>
-        </div>
-        <div class="stat-card stat-info">
-            <div class="stat-icon"><i class="fas fa-chalkboard-teacher"></i></div>
-            <div class="stat-details">
-                <h3><?php echo count(array_filter($users, fn($u) => $u['role'] === 'teacher')); ?></h3>
-                <p>Преподавателей</p>
-            </div>
-        </div>
-    </div>
+<?php if ($error): ?>
+    <div class="alert alert-error"><?= htmlspecialchars($error) ?></div>
+<?php endif; ?>
 
-    <!-- Таблица пользователей -->
-    <div class="dashboard-card full-width">
-        <div class="card-header">
-            <h3><i class="fas fa-list"></i> Список пользователей</h3>
+<!-- Фильтры -->
+<div class="filters">
+    <div class="filter-row">
+        <div class="form-group" style="margin-bottom: 0; flex: 1;">
+            <label for="searchInput">🔍 Поиск</label>
+            <input type="text" id="searchInput" class="form-control" placeholder="Поиск по имени или логину..." onkeyup="searchTable('searchInput', 'usersTable')">
         </div>
-        <div class="card-body" style="padding: 0;">
-            <table class="table table-striped table-hover">
-                <thead>
-                    <tr>
-                        <th>ID</th>
-                        <th>Логин</th>
-                        <th>ФИО</th>
-                        <th>Email</th>
-                        <th>Роль</th>
-                        <th>Дата регистрации</th>
-                        <th>Последнее обновление</th>
-                        <th style="width: 150px;">Действия</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($users as $usr): ?>
-                    <tr>
-                        <td><strong>#<?php echo $usr['id']; ?></strong></td>
-                        <td>
-                            <code><?php echo e($usr['username']); ?></code>
-                        </td>
-                        <td><strong><?php echo e($usr['full_name']); ?></strong></td>
-                        <td><?php echo e($usr['email'] ?? '-'); ?></td>
-                        <td>
-                            <?php if ($usr['role'] === 'admin'): ?>
-                            <span class="badge badge-warning">
-                                <i class="fas fa-user-shield"></i> Администратор
-                            </span>
-                            <?php else: ?>
-                            <span class="badge badge-info">
-                                <i class="fas fa-chalkboard-teacher"></i> Преподаватель
-                            </span>
-                            <?php endif; ?>
-                        </td>
-                        <td><?php echo formatDate($usr['created_at']); ?></td>
-                        <td><?php echo formatDate($usr['updated_at']); ?></td>
-                        <td>
-                            <a href="user_edit.php?id=<?php echo $usr['id']; ?>" 
-                               class="btn btn-sm btn-outline" 
-                               data-tooltip="Редактировать">
-                                <i class="fas fa-edit"></i>
-                            </a>
-                            <?php if ($usr['id'] != $user['id']): ?>
-                            <a href="user_delete.php?id=<?php echo $usr['id']; ?>" 
-                               class="btn btn-sm btn-outline" 
-                               data-confirm="Вы уверены, что хотите удалить пользователя?"
-                               data-tooltip="Удалить"
-                               style="color: #dc3545; border-color: #dc3545;">
-                                <i class="fas fa-trash"></i>
-                            </a>
-                            <?php endif; ?>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <!-- Информация о безопасности -->
-    <div class="dashboard-card full-width" style="margin-top: 24px;">
-        <div class="card-header">
-            <h3><i class="fas fa-shield-alt"></i> Безопасность</h3>
-        </div>
-        <div class="card-body">
-            <div style="background: #fff3cd; padding: 20px; border-radius: 12px; border-left: 4px solid #ffc107;">
-                <h4 style="margin-bottom: 10px; color: #856404;">
-                    <i class="fas fa-exclamation-triangle"></i> Важно!
-                </h4>
-                <p style="color: #856404; margin-bottom: 0;">
-                    В текущей версии пароли хранятся в открытом виде без хэширования (учебный проект). 
-                    В production-среде обязательно используйте <code>password_hash()</code> для безопасного хранения паролей.
-                </p>
-            </div>
+        <div class="form-group" style="margin-bottom: 0; display: flex; align-items: end;">
+            <a href="#" class="btn btn-primary" onclick="openModal('addUserModal')">➕ Добавить пользователя</a>
         </div>
     </div>
 </div>
 
-<?php include BASE_PATH . '/includes/footer.php'; ?>
+<!-- Таблица пользователей -->
+<div class="table-container">
+    <table class="data-table" id="usersTable">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Логин</th>
+                <th>ФИО</th>
+                <th>Роль</th>
+                <th>Email</th>
+                <th>Статус</th>
+                <th>Дата создания</th>
+                <th>Действия</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach ($users as $user): ?>
+            <tr>
+                <td><?= $user['id'] ?></td>
+                <td><strong><?= htmlspecialchars($user['username']) ?></strong></td>
+                <td><?= htmlspecialchars($user['full_name']) ?></td>
+                <td>
+                    <?php if ($user['role'] === ROLE_ADMIN): ?>
+                        <span class="badge badge-danger">Администратор</span>
+                    <?php else: ?>
+                        <span class="badge badge-info">Преподаватель</span>
+                    <?php endif; ?>
+                </td>
+                <td><?= htmlspecialchars($user['email'] ?? '-') ?></td>
+                <td>
+                    <?php if ($user['is_active']): ?>
+                        <span class="badge badge-success">Активен</span>
+                    <?php else: ?>
+                        <span class="badge badge-warning">Заблокирован</span>
+                    <?php endif; ?>
+                </td>
+                <td><?= formatDate($user['created_at']) ?></td>
+                <td>
+                    <div class="btn-group">
+                        <?php if ($user['id'] != $_SESSION['user_id']): ?>
+                            <a href="?delete=<?= $user['id'] ?>" class="btn btn-sm btn-danger" 
+                               onclick="return confirm('Вы уверены, что хотите удалить пользователя?')" title="Удалить">🗑️</a>
+                        <?php endif; ?>
+                    </div>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+
+<!-- Модальное окно добавления пользователя -->
+<div id="addUserModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h3>➕ Добавить пользователя</h3>
+            <button class="modal-close" onclick="closeModal('addUserModal')">&times;</button>
+        </div>
+        <form method="POST" action="" id="addUserForm">
+            <div class="modal-body">
+                <input type="hidden" name="add_user" value="1">
+                
+                <div class="form-group">
+                    <label>Логин *</label>
+                    <input type="text" name="username" class="form-control" required placeholder="Уникальный логин">
+                </div>
+                
+                <div class="form-group">
+                    <label>Пароль *</label>
+                    <input type="password" name="password" class="form-control" required minlength="6" placeholder="Минимум 6 символов">
+                </div>
+                
+                <div class="form-group">
+                    <label>ФИО *</label>
+                    <input type="text" name="full_name" class="form-control" required placeholder="Фамилия Имя Отчество">
+                </div>
+                
+                <div class="form-group">
+                    <label>Email</label>
+                    <input type="email" name="email" class="form-control" placeholder="email@example.com">
+                </div>
+                
+                <div class="form-group">
+                    <label>Роль *</label>
+                    <select name="role" class="form-control" required>
+                        <option value="teacher">Преподаватель</option>
+                        <option value="admin">Администратор</option>
+                    </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeModal('addUserModal')">Отмена</button>
+                <button type="submit" class="btn btn-primary">Добавить</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<script>
+document.getElementById('addUserModal')?.addEventListener('click', function(e) {
+    if (e.target === this) {
+        closeModal('addUserModal');
+    }
+});
+</script>
+
+<?php include '../../includes/footer.php'; ?>
