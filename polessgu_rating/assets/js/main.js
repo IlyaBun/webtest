@@ -1,76 +1,186 @@
 /**
- * Основной JavaScript файл
- * Система оценки успеваемости ПолесГУ
+ * Основной JavaScript файл системы
  */
 
-// Автоматическое скрытие flash-сообщений через 5 секунд
-document.addEventListener('DOMContentLoaded', function() {
-    const flashMessages = document.querySelectorAll('.flash-message');
-    
-    flashMessages.forEach(function(flash) {
-        setTimeout(function() {
-            flash.style.animation = 'slideOut 0.3s ease forwards';
-            setTimeout(function() {
-                flash.remove();
-            }, 300);
-        }, 5000);
-    });
-    
-    // Подтверждение удаления
-    const deleteButtons = document.querySelectorAll('[data-confirm]');
-    deleteButtons.forEach(function(btn) {
-        btn.addEventListener('click', function(e) {
-            const message = this.getAttribute('data-confirm') || 'Вы уверены?';
-            if (!confirm(message)) {
-                e.preventDefault();
-            }
-        });
-    });
-});
-
-// Анимация для графиков (если используется Chart.js)
-function animateChart(chart) {
-    if (chart) {
-        chart.options.animation = {
-            duration: 1000,
-            easing: 'easeOutQuart'
-        };
+// Переключение боковой панели на мобильных устройствах
+function toggleSidebar() {
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar) {
+        sidebar.classList.toggle('show');
     }
 }
 
-// Форматирование чисел
-function formatNumber(num) {
-    return new Intl.NumberFormat('ru-BY').format(num);
+// Закрытие модального окна
+function closeModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+        modal.classList.remove('show');
+    }
 }
+
+// Открытие модального окна
+function openModal(modalId) {
+    const modal = document.getElementById(modalId);
+    if (modal) {
+        modal.classList.add('show');
+    }
+}
+
+// Подтверждение удаления
+function confirmDelete(message, url) {
+    if (confirm(message || 'Вы уверены, что хотите удалить эту запись?')) {
+        window.location.href = url;
+    }
+}
+
+// Инициализация графиков
+function initCharts() {
+    // График распределения оценок
+    const gradeChartCtx = document.getElementById('gradeDistributionChart');
+    if (gradeChartCtx) {
+        new Chart(gradeChartCtx, {
+            type: 'doughnut',
+            data: {
+                labels: ['Отлично (9-10)', 'Хорошо (7-8)', 'Удовл. (5-6)', 'Неудовл. (3-4)'],
+                datasets: [{
+                    data: gradeChartCtx.dataset.data ? JSON.parse(gradeChartCtx.dataset.data) : [25, 35, 30, 10],
+                    backgroundColor: ['#28a745', '#17a2b8', '#ffc107', '#dc3545']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+    }
+
+    // График успеваемости по группам
+    const groupChartCtx = document.getElementById('groupPerformanceChart');
+    if (groupChartCtx) {
+        new Chart(groupChartCtx, {
+            type: 'bar',
+            data: {
+                labels: groupChartCtx.dataset.labels ? JSON.parse(groupChartCtx.dataset.labels) : ['МП-11', 'МП-21', 'МП-31', 'МП-41'],
+                datasets: [{
+                    label: 'Средний балл',
+                    data: groupChartCtx.dataset.data ? JSON.parse(groupChartCtx.dataset.data) : [7.5, 8.2, 7.8, 8.5],
+                    backgroundColor: 'rgba(102, 126, 234, 0.8)'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        max: 10
+                    }
+                }
+            }
+        });
+    }
+
+    // График динамики успеваемости
+    const dynamicsChartCtx = document.getElementById('dynamicsChart');
+    if (dynamicsChartCtx) {
+        new Chart(dynamicsChartCtx, {
+            type: 'line',
+            data: {
+                labels: ['Сен', 'Окт', 'Ноя', 'Дек', 'Янв', 'Фев'],
+                datasets: [{
+                    label: 'Средний балл',
+                    data: dynamicsChartCtx.dataset.data ? JSON.parse(dynamicsChartCtx.dataset.data) : [7.2, 7.4, 7.6, 7.8, 7.9, 8.0],
+                    borderColor: '#667eea',
+                    tension: 0.4,
+                    fill: true,
+                    backgroundColor: 'rgba(102, 126, 234, 0.1)'
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: false,
+                        min: 5,
+                        max: 10
+                    }
+                }
+            }
+        });
+    }
+}
+
+// Автозапуск при загрузке страницы
+document.addEventListener('DOMContentLoaded', function() {
+    initCharts();
+    
+    // Плавное появление элементов
+    const cards = document.querySelectorAll('.stat-card');
+    cards.forEach((card, index) => {
+        card.style.opacity = '0';
+        card.style.transform = 'translateY(20px)';
+        setTimeout(() => {
+            card.style.transition = 'opacity 0.5s, transform 0.5s';
+            card.style.opacity = '1';
+            card.style.transform = 'translateY(0)';
+        }, index * 100);
+    });
+});
 
 // Поиск по таблице
 function searchTable(inputId, tableId) {
     const input = document.getElementById(inputId);
     const table = document.getElementById(tableId);
+    if (!input || !table) return;
+    
     const filter = input.value.toUpperCase();
     const tr = table.getElementsByTagName('tr');
     
     for (let i = 1; i < tr.length; i++) {
-        let visible = false;
+        let showRow = false;
         const td = tr[i].getElementsByTagName('td');
-        
         for (let j = 0; j < td.length; j++) {
             if (td[j]) {
                 const txtValue = td[j].textContent || td[j].innerText;
                 if (txtValue.toUpperCase().indexOf(filter) > -1) {
-                    visible = true;
+                    showRow = true;
                     break;
                 }
             }
         }
-        
-        tr[i].style.display = visible ? '' : 'none';
+        tr[i].style.display = showRow ? '' : 'none';
+    }
+}
+
+// Фильтрация по группе
+function filterByGroup(selectId, tableId, columnIndex) {
+    const select = document.getElementById(selectId);
+    const table = document.getElementById(tableId);
+    if (!select || !table) return;
+    
+    const filter = select.value.toUpperCase();
+    const tr = table.getElementsByTagName('tr');
+    
+    for (let i = 1; i < tr.length; i++) {
+        const td = tr[i].getElementsByTagName('td')[columnIndex];
+        if (td) {
+            const txtValue = td.textContent || td.innerText;
+            tr[i].style.display = txtValue.toUpperCase().indexOf(filter) > -1 ? '' : 'none';
+        }
     }
 }
 
 // Экспорт таблицы в CSV
 function exportTableToCSV(tableId, filename) {
     const table = document.getElementById(tableId);
+    if (!table) return;
+    
     let csv = [];
     const rows = table.querySelectorAll('tr');
     
@@ -78,18 +188,18 @@ function exportTableToCSV(tableId, filename) {
         const row = [];
         const cols = rows[i].querySelectorAll('td, th');
         
-        for (let j = 0; j < cols.length - 1; j++) { // Игнорируем последний столбец с действиями
-            row.push(cols[j].innerText);
+        for (let j = 0; j < cols.length - 1; j++) { // Исключаем колонку действий
+            row.push('"' + cols[j].innerText.replace(/"/g, '""') + '"');
         }
         
-        csv.push(row.join(';'));
+        csv.push(row.join(','));
     }
     
     downloadCSV(csv.join('\n'), filename);
 }
 
 function downloadCSV(csv, filename) {
-    const csvFile = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+    const csvFile = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
     const downloadLink = document.createElement('a');
     downloadLink.download = filename;
     downloadLink.href = window.URL.createObjectURL(csvFile);
@@ -99,49 +209,44 @@ function downloadCSV(csv, filename) {
     document.body.removeChild(downloadLink);
 }
 
-// Модальные окна
-function openModal(modalId) {
-    const modal = document.getElementById(modalId);
-    if (modal) {
-        modal.style.display = 'flex';
-        document.body.style.overflow = 'hidden';
-    }
-}
-
-function closeModal(modalId) {
-    const modal = document.getElementById(modalId);
-    if (modal) {
-        modal.style.display = 'none';
-        document.body.style.overflow = '';
-    }
-}
-
-// Закрытие модального окна по клику вне его
-window.onclick = function(event) {
-    if (event.target.classList.contains('modal')) {
-        event.target.style.display = 'none';
-        document.body.style.overflow = '';
-    }
-};
-
-// Валидация форм
+// Валидация формы
 function validateForm(formId) {
     const form = document.getElementById(formId);
     if (!form) return true;
     
-    const inputs = form.querySelectorAll('[required]');
+    const requiredFields = form.querySelectorAll('[required]');
     let isValid = true;
     
-    inputs.forEach(function(input) {
-        if (!input.value.trim()) {
-            input.classList.add('error');
+    requiredFields.forEach(field => {
+        if (!field.value.trim()) {
+            field.style.borderColor = '#dc3545';
             isValid = false;
         } else {
-            input.classList.remove('error');
+            field.style.borderColor = '#e1e1e1';
         }
     });
     
     return isValid;
+}
+
+// Уведомления
+function showNotification(message, type = 'success') {
+    const notification = document.createElement('div');
+    notification.className = `alert alert-${type}`;
+    notification.style.position = 'fixed';
+    notification.style.top = '20px';
+    notification.style.right = '20px';
+    notification.style.zIndex = '9999';
+    notification.style.minWidth = '300px';
+    notification.innerHTML = message;
+    
+    document.body.appendChild(notification);
+    
+    setTimeout(() => {
+        notification.style.transition = 'opacity 0.5s';
+        notification.style.opacity = '0';
+        setTimeout(() => notification.remove(), 500);
+    }, 3000);
 }
 
 // AJAX запросы
@@ -150,7 +255,6 @@ async function ajaxRequest(url, method = 'GET', data = null) {
         method: method,
         headers: {
             'Content-Type': 'application/json',
-            'X-Requested-With': 'XMLHttpRequest'
         }
     };
     
@@ -160,91 +264,26 @@ async function ajaxRequest(url, method = 'GET', data = null) {
     
     try {
         const response = await fetch(url, options);
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
         return await response.json();
     } catch (error) {
-        console.error('AJAX Error:', error);
-        throw error;
+        console.error('Error:', error);
+        return null;
     }
 }
 
-// Уведомления
-function showNotification(message, type = 'info') {
-    const notification = document.createElement('div');
-    notification.className = `flash-message flash-${type}`;
-    notification.innerHTML = `
-        <i class="fas fa-${type === 'success' ? 'check-circle' : (type === 'error' ? 'exclamation-circle' : 'info-circle')}"></i>
-        <span>${message}</span>
-        <button class="close-flash" onclick="this.parentElement.remove()">
-            <i class="fas fa-times"></i>
-        </button>
-    `;
-    
-    document.body.appendChild(notification);
-    
-    setTimeout(function() {
-        notification.style.animation = 'slideOut 0.3s ease forwards';
-        setTimeout(function() {
-            notification.remove();
-        }, 300);
-    }, 5000);
+// Форматирование даты
+function formatDate(dateString) {
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}.${month}.${year}`;
 }
 
-// Добавление анимации slideOut
-const style = document.createElement('style');
-style.textContent = `
-    @keyframes slideOut {
-        from {
-            transform: translateX(0);
-            opacity: 1;
-        }
-        to {
-            transform: translateX(400px);
-            opacity: 0;
-        }
-    }
-`;
-document.head.appendChild(style);
-
-// Инициализация tooltips
-function initTooltips() {
-    const tooltipElements = document.querySelectorAll('[data-tooltip]');
-    tooltipElements.forEach(function(el) {
-        el.addEventListener('mouseenter', function(e) {
-            const tooltip = document.createElement('div');
-            tooltip.className = 'tooltip';
-            tooltip.textContent = this.getAttribute('data-tooltip');
-            tooltip.style.position = 'absolute';
-            tooltip.style.background = '#1e293b';
-            tooltip.style.color = '#fff';
-            tooltip.style.padding = '8px 12px';
-            tooltip.style.borderRadius = '6px';
-            tooltip.style.fontSize = '12px';
-            tooltip.style.zIndex = '10000';
-            tooltip.style.left = e.pageX + 10 + 'px';
-            tooltip.style.top = e.pageY + 10 + 'px';
-            
-            document.body.appendChild(tooltip);
-            this._tooltip = tooltip;
-        });
-        
-        el.addEventListener('mousemove', function(e) {
-            if (this._tooltip) {
-                this._tooltip.style.left = e.pageX + 10 + 'px';
-                this._tooltip.style.top = e.pageY + 10 + 'px';
-            }
-        });
-        
-        el.addEventListener('mouseleave', function() {
-            if (this._tooltip) {
-                this._tooltip.remove();
-                this._tooltip = null;
-            }
-        });
-    });
+// Получение цвета для оценки
+function getGradeColor(grade) {
+    if (grade >= 9) return '#28a745';
+    if (grade >= 7) return '#17a2b8';
+    if (grade >= 5) return '#ffc107';
+    return '#dc3545';
 }
-
-// Инициализация после загрузки страницы
-document.addEventListener('DOMContentLoaded', initTooltips);

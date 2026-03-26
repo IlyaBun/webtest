@@ -1,339 +1,288 @@
 <?php
 /**
- * Страница аналитики и отчетов
- * Система оценки успеваемости ПолесГУ
+ * Страница аналитики
  */
+require_once '../../config/db_config.php';
+require_once '../../config/app_config.php';
 
-session_start();
-require_once __DIR__ . '/../../config/app_config.php';
-requireAuth();
+checkAuth();
 
-$user = getCurrentUser();
+$pageTitle = 'Аналитика и отчеты';
 
-// Общая статистика факультета
-$facultyStats = dbFetchOne("SELECT * FROM v_faculty_summary");
+try {
+    $pdo = getDBConnection();
+    
+    // Успеваемость по группам
+    $groupPerformanceStmt = $pdo->query("
+        SELECT gr.name as group_name, 
+               COUNT(DISTINCT s.id) as student_count,
+               ROUND(AVG(g.grade), 2) as avg_grade,
+               SUM(CASE WHEN g.grade >= 9 THEN 1 ELSE 0 END) as excellent_count,
+               SUM(CASE WHEN g.grade >= 7 AND g.grade < 9 THEN 1 ELSE 0 END) as good_count,
+               SUM(CASE WHEN g.grade >= 5 AND g.grade < 7 THEN 1 ELSE 0 END) as satisfactory_count,
+               SUM(CASE WHEN g.grade < 5 THEN 1 ELSE 0 END) as unsatisfactory_count
+        FROM groups gr
+        LEFT JOIN students s ON gr.id = s.group_id AND s.status = 'active'
+        LEFT JOIN grades g ON s.id = g.student_id
+        GROUP BY gr.id, gr.name
+        ORDER BY avg_grade DESC
+    ");
+    $groupPerformance = $groupPerformanceStmt->fetchAll();
+    
+    // Рейтинг студентов
+    $studentRatingStmt = $pdo->query("
+        SELECT s.last_name, s.first_name, s.middle_name, gr.name as group_name,
+               ROUND(AVG(g.grade), 2) as avg_grade,
+               COUNT(g.id) as grade_count
+        FROM students s
+        JOIN groups gr ON s.group_id = gr.id
+        JOIN grades g ON s.id = g.student_id
+        WHERE s.status = 'active'
+        GROUP BY s.id, s.last_name, s.first_name, s.middle_name, gr.name
+        HAVING COUNT(g.id) >= 3
+        ORDER BY avg_grade DESC
+        LIMIT 20
+    ");
+    $studentRating = $studentRatingStmt->fetchAll();
+    
+    // Динамика успеваемости по месяцам
+    $dynamicsStmt = $pdo->query("
+        SELECT DATE_FORMAT(grade_date, '%Y-%m') as month,
+               ROUND(AVG(grade), 2) as avg_grade,
+               COUNT(*) as grade_count
+        FROM grades
+        GROUP BY DATE_FORMAT(grade_date, '%Y-%m')
+        ORDER BY month DESC
+        LIMIT 6
+    ");
+    $dynamics = array_reverse($dynamicsStmt->fetchAll());
+    
+    // Распределение оценок по дисциплинам
+    $disciplineStatsStmt = $pdo->query("
+        SELECT d.name as discipline_name,
+               ROUND(AVG(g.grade), 2) as avg_grade,
+               COUNT(g.id) as grade_count,
+               MIN(g.grade) as min_grade,
+               MAX(g.grade) as max_grade
+        FROM disciplines d
+        JOIN grades g ON d.id = g.discipline_id
+        GROUP BY d.id, d.name
+        ORDER BY avg_grade DESC
+    ");
+    $disciplineStats = $disciplineStatsStmt->fetchAll();
+    
+} catch (PDOException $e) {
+    $error = 'Ошибка получения данных: ' . $e->getMessage();
+}
 
-// Статистика по группам
-$groupStats = dbFetchAll("SELECT * FROM v_group_statistics ORDER BY group_average DESC", []);
-
-// Рейтинг студентов
-$studentRating = dbFetchAll("
-    SELECT * FROM v_student_average 
-    WHERE total_grades > 0
-    ORDER BY average_grade DESC, total_grades DESC
-    LIMIT 20
-", []);
-
-// Распределение оценок по дисциплинам
-$disciplineStats = dbFetchAll("
-    SELECT 
-        d.name as discipline_name,
-        COUNT(gr.id) as total_grades,
-        ROUND(AVG(gr.grade), 2) as average_grade,
-        SUM(CASE WHEN gr.grade >= 9 THEN 1 ELSE 0 END) as excellent_count,
-        SUM(CASE WHEN gr.grade >= 7 AND gr.grade < 9 THEN 1 ELSE 0 END) as good_count,
-        SUM(CASE WHEN gr.grade >= 4 AND gr.grade < 7 THEN 1 ELSE 0 END) as satisfactory_count,
-        SUM(CASE WHEN gr.grade < 4 THEN 1 ELSE 0 END) as poor_count
-    FROM disciplines d
-    LEFT JOIN grades gr ON d.id = gr.discipline_id
-    GROUP BY d.id, d.name
-    HAVING total_grades > 0
-    ORDER BY average_grade DESC
-", []);
-
-// Динамика успеваемости по семестрам
-$semesterStats = dbFetchAll("
-    SELECT 
-        academic_year,
-        semester,
-        ROUND(AVG(grade), 2) as average_grade,
-        COUNT(*) as total_grades,
-        SUM(CASE WHEN grade >= 9 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as excellent_percent,
-        SUM(CASE WHEN grade >= 4 THEN 1 ELSE 0 END) * 100.0 / COUNT(*) as success_percent
-    FROM grades
-    GROUP BY academic_year, semester
-    ORDER BY academic_year DESC, semester DESC
-", []);
-
-// Статистика по курсам
-$courseStats = dbFetchAll("
-    SELECT 
-        g.course,
-        COUNT(DISTINCT s.id) as student_count,
-        ROUND(AVG(gr.grade), 2) as average_grade,
-        SUM(CASE WHEN gr.grade >= 4 THEN 1 ELSE 0 END) * 100.0 / NULLIF(COUNT(gr.grade), 0) as success_rate
-    FROM groups g
-    LEFT JOIN students s ON g.id = s.group_id AND s.status = 'active'
-    LEFT JOIN grades gr ON s.id = gr.student_id
-    GROUP BY g.course
-    ORDER BY g.course
-", []);
-
-include BASE_PATH . '/includes/header.php';
-include BASE_PATH . '/includes/sidebar.php';
+include '../../includes/header.php';
 ?>
 
-<div class="main-content">
-    <div class="top-bar">
-        <div class="breadcrumb">
-            <h1><i class="fas fa-chart-bar"></i> Аналитика и отчеты</h1>
-        </div>
+<?php if (isset($error)): ?>
+    <div class="alert alert-error"><?= htmlspecialchars($error) ?></div>
+<?php endif; ?>
+
+<!-- Сводная статистика -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="stat-icon">📊</div>
+        <div class="stat-value"><?= count($groupPerformance) ?></div>
+        <div class="stat-label">Учебных групп</div>
     </div>
-
-    <!-- Ключевые показатели -->
-    <div class="stats-grid">
-        <div class="stat-card stat-primary">
-            <div class="stat-icon"><i class="fas fa-users"></i></div>
-            <div class="stat-details">
-                <h3><?php echo $facultyStats['total_students'] ?? 0; ?></h3>
-                <p>Всего студентов</p>
-            </div>
-        </div>
-        <div class="stat-card stat-success">
-            <div class="stat-icon"><i class="fas fa-chart-line"></i></div>
-            <div class="stat-details">
-                <h3><?php echo $facultyStats['faculty_average'] ?? '0.00'; ?></h3>
-                <p>Средний балл</p>
-            </div>
-        </div>
-        <div class="stat-card stat-warning">
-            <div class="stat-icon"><i class="fas fa-medal"></i></div>
-            <div class="stat-details">
-                <h3><?php echo $facultyStats['excellent_count'] ?? 0; ?></h3>
-                <p>Отличников</p>
-            </div>
-        </div>
-        <div class="stat-card stat-info">
-            <div class="stat-icon"><i class="fas fa-percentage"></i></div>
-            <div class="stat-details">
-                <h3><?php echo $facultyStats['overall_success_rate'] ?? '0.00'; ?>%</h3>
-                <p>Успеваемость</p>
-            </div>
-        </div>
+    
+    <div class="stat-card success">
+        <div class="stat-icon">🎓</div>
+        <div class="stat-value"><?= count($studentRating) ?></div>
+        <div class="stat-label">Активных студентов</div>
     </div>
-
-    <!-- Графики -->
-    <div class="dashboard-grid">
-        <!-- Распределение по уровням -->
-        <div class="dashboard-card">
-            <div class="card-header">
-                <h3><i class="fas fa-chart-pie"></i> Распределение студентов</h3>
-            </div>
-            <div class="card-body">
-                <canvas id="distributionChart"></canvas>
-            </div>
-        </div>
-
-        <!-- Успеваемость по курсам -->
-        <div class="dashboard-card">
-            <div class="card-header">
-                <h3><i class="fas fa-chart-bar"></i> Успеваемость по курсам</h3>
-            </div>
-            <div class="card-body">
-                <canvas id="courseChart"></canvas>
-            </div>
-        </div>
-    </div>
-
-    <!-- Рейтинг групп -->
-    <div class="dashboard-card full-width" style="margin-bottom: 24px;">
-        <div class="card-header">
-            <h3><i class="fas fa-trophy"></i> Рейтинг групп</h3>
-        </div>
-        <div class="card-body">
-            <table class="table table-striped">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>Группа</th>
-                        <th>Курс</th>
-                        <th>Специальность</th>
-                        <th>Студентов</th>
-                        <th>Отличников</th>
-                        <th>Хорошистов</th>
-                        <th>Удовл.</th>
-                        <th>Неуд.</th>
-                        <th>Ср. балл</th>
-                        <th>Успеваемость</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php $rank = 1; foreach ($groupStats as $group): ?>
-                    <tr>
-                        <td><strong><?php echo $rank++; ?></strong></td>
-                        <td><span class="badge badge-primary"><?php echo e($group['group_name']); ?></span></td>
-                        <td><?php echo $group['course']; ?></td>
-                        <td><?php echo e($group['specialty']); ?></td>
-                        <td><?php echo $group['total_students']; ?></td>
-                        <td><?php echo $group['excellent_students'] ?? 0; ?></td>
-                        <td><?php echo $group['good_students'] ?? 0; ?></td>
-                        <td><?php echo $group['satisfactory_students'] ?? 0; ?></td>
-                        <td><?php echo $group['poor_students'] ?? 0; ?></td>
-                        <td>
-                            <strong><?php echo $group['group_average']; ?></strong>
-                        </td>
-                        <td>
-                            <div style="display: flex; align-items: center; gap: 8px;">
-                                <div style="flex: 1; background: #e2e8f0; border-radius: 10px; height: 8px; overflow: hidden;">
-                                    <div style="width: <?php echo $group['success_rate'] ?? 0; ?>%; background: <?php echo ($group['success_rate'] ?? 0) >= 80 ? '#28a745' : (($group['success_rate'] ?? 0) >= 60 ? '#ffc107' : '#dc3545'); ?>; height: 100%;"></div>
-                                </div>
-                                <span style="font-size: 12px;"><?php echo number_format($group['success_rate'] ?? 0, 1); ?>%</span>
-                            </div>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <!-- Топ студентов -->
-    <div class="dashboard-card full-width" style="margin-bottom: 24px;">
-        <div class="card-header">
-            <h3><i class="fas fa-star"></i> Топ-20 студентов по успеваемости</h3>
-        </div>
-        <div class="card-body">
-            <table class="table table-hover">
-                <thead>
-                    <tr>
-                        <th>#</th>
-                        <th>ФИО студента</th>
-                        <th>Группа</th>
-                        <th>Специальность</th>
-                        <th>Оценок</th>
-                        <th>Средний балл</th>
-                        <th>Уровень</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php $rank = 1; foreach ($studentRating as $student): 
-                        $level = getKnowledgeLevel($student['average_grade']);
-                    ?>
-                    <tr>
-                        <td>
-                            <?php if ($rank <= 3): ?>
-                            <i class="fas fa-trophy" style="color: <?php echo $rank === 1 ? '#ffd700' : ($rank === 2 ? '#c0c0c0' : '#cd7f32'); ?>;"></i>
-                            <?php endif; ?>
-                            <strong><?php echo $rank++; ?></strong>
-                        </td>
-                        <td><strong><?php echo e($student['full_name']); ?></strong></td>
-                        <td><?php echo e($student['group_name']); ?></td>
-                        <td><?php echo e($student['specialty']); ?></td>
-                        <td><?php echo $student['total_grades']; ?></td>
-                        <td>
-                            <strong style="color: <?php echo getGradeColor($student['average_grade']); ?>;">
-                                <?php echo $student['average_grade']; ?>
-                            </strong>
-                        </td>
-                        <td>
-                            <span class="badge badge-<?php echo $level['class']; ?>"><?php echo $level['level']; ?></span>
-                        </td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
-    </div>
-
-    <!-- Статистика по дисциплинам -->
-    <div class="dashboard-card full-width">
-        <div class="card-header">
-            <h3><i class="fas fa-book"></i> Успеваемость по дисциплинам</h3>
-        </div>
-        <div class="card-body">
-            <table class="table table-striped">
-                <thead>
-                    <tr>
-                        <th>Дисциплина</th>
-                        <th>Всего оценок</th>
-                        <th>Средний балл</th>
-                        <th>Отлично</th>
-                        <th>Хорошо</th>
-                        <th>Удовл.</th>
-                        <th>Неуд.</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    <?php foreach ($disciplineStats as $discipline): ?>
-                    <tr>
-                        <td><strong><?php echo e($discipline['discipline_name']); ?></strong></td>
-                        <td><?php echo $discipline['total_grades']; ?></td>
-                        <td>
-                            <span class="badge badge-<?php echo $discipline['average_grade'] >= 7 ? 'success' : ($discipline['average_grade'] >= 5 ? 'warning' : 'danger'); ?>">
-                                <?php echo $discipline['average_grade']; ?>
-                            </span>
-                        </td>
-                        <td><span class="badge badge-success"><?php echo $discipline['excellent_count']; ?></span></td>
-                        <td><span class="badge badge-info"><?php echo $discipline['good_count']; ?></span></td>
-                        <td><span class="badge badge-warning"><?php echo $discipline['satisfactory_count']; ?></span></td>
-                        <td><span class="badge badge-danger"><?php echo $discipline['poor_count']; ?></span></td>
-                    </tr>
-                    <?php endforeach; ?>
-                </tbody>
-            </table>
-        </div>
+    
+    <div class="stat-card info">
+        <div class="stat-icon">📚</div>
+        <div class="stat-value"><?= count($disciplineStats) ?></div>
+        <div class="stat-label">Дисциплин с оценками</div>
     </div>
 </div>
 
-<!-- Chart.js для графиков -->
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script>
-// Распределение студентов
-const distCtx = document.getElementById('distributionChart').getContext('2d');
-new Chart(distCtx, {
-    type: 'doughnut',
-    data: {
-        labels: ['Отличники', 'Хорошисты', 'Удовл.', 'Неуд.'],
-        datasets: [{
-            data: [
-                <?php echo $facultyStats['excellent_count'] ?? 0; ?>,
-                <?php echo $facultyStats['good_count'] ?? 0; ?>,
-                <?php echo $facultyStats['satisfactory_count'] ?? 0; ?>,
-                <?php echo $facultyStats['poor_count'] ?? 0; ?>
-            ],
-            backgroundColor: ['#28a745', '#17a2b8', '#ffc107', '#dc3545'],
-            borderWidth: 2,
-            borderColor: '#fff'
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-            legend: { position: 'bottom' }
-        }
-    }
-});
+<!-- Графики -->
+<div class="charts-grid">
+    <div class="chart-container">
+        <h3>📈 Динамика успеваемости</h3>
+        <canvas id="dynamicsChart" data-data='[<?= implode(', ', array_column($dynamics, 'avg_grade')) ?>' ]' height="250"></canvas>
+    </div>
+    
+    <div class="chart-container">
+        <h3>🏆 Топ групп</h3>
+        <canvas id="topGroupsChart" 
+                data-labels='[<?php echo implode('", "', array_slice(array_column($groupPerformance, 'group_name'), 0, 5)) ?>' ]' 
+                data-data='[<?php echo implode(', ', array_slice(array_column($groupPerformance, 'avg_grade'), 0, 5)) ?>' ]' 
+                height="250"></canvas>
+    </div>
+</div>
 
-// Успеваемость по курсам
-const courseCtx = document.getElementById('courseChart').getContext('2d');
-new Chart(courseCtx, {
-    type: 'bar',
-    data: {
-        labels: [<?php foreach ($courseStats as $cs) echo "'{$cs['course']} курс',"; ?>],
-        datasets: [{
-            label: 'Средний балл',
-            data: [<?php foreach ($courseStats as $cs) echo "{$cs['average_grade']},"; ?>],
-            backgroundColor: '#4f46e5',
-            borderRadius: 8
-        }, {
-            label: 'Успеваемость %',
-            data: [<?php foreach ($courseStats as $cs) echo "{$cs['success_rate']},"; ?>],
-            backgroundColor: '#28a745',
-            borderRadius: 8
-        }]
-    },
-    options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        scales: {
-            y: { beginAtZero: true, max: 100 }
+<!-- Успеваемость по группам -->
+<div class="table-container">
+    <div class="table-header">
+        <h2>📊 Успеваемость по группам</h2>
+    </div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Группа</th>
+                <th>Студентов</th>
+                <th>Средний балл</th>
+                <th>Отлично (9-10)</th>
+                <th>Хорошо (7-8)</th>
+                <th>Удовл. (5-6)</th>
+                <th>Неудовл. (3-4)</th>
+                <th>Качество (%)</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach ($groupPerformance as $group): 
+                $total = $group['excellent_count'] + $group['good_count'] + $group['satisfactory_count'] + $group['unsatisfactory_count'];
+                $quality = $total > 0 ? round(($group['excellent_count'] + $group['good_count']) / $total * 100) : 0;
+            ?>
+            <tr>
+                <td><strong><?= htmlspecialchars($group['group_name']) ?></strong></td>
+                <td><?= $group['student_count'] ?? 0 ?></td>
+                <td><strong style="color: <?= getGradeColor($group['avg_grade']) ?>"><?= $group['avg_grade'] ?? '-' ?></strong></td>
+                <td><span class="badge badge-success"><?= $group['excellent_count'] ?? 0 ?></span></td>
+                <td><span class="badge badge-info"><?= $group['good_count'] ?? 0 ?></span></td>
+                <td><span class="badge badge-warning"><?= $group['satisfactory_count'] ?? 0 ?></span></td>
+                <td><span class="badge badge-danger"><?= $group['unsatisfactory_count'] ?? 0 ?></span></td>
+                <td>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <div style="flex: 1; background: #e9ecef; border-radius: 10px; height: 8px; overflow: hidden;">
+                            <div style="width: <?= $quality ?>%; background: linear-gradient(90deg, #28a745, #17a2b8); height: 100%;"></div>
+                        </div>
+                        <span><?= $quality ?>%</span>
+                    </div>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+
+<!-- Рейтинг студентов -->
+<div class="table-container">
+    <div class="table-header">
+        <h2>🌟 Рейтинг студентов (Топ-20)</h2>
+    </div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Место</th>
+                <th>ФИО</th>
+                <th>Группа</th>
+                <th>Средний балл</th>
+                <th>Количество оценок</th>
+                <th>Уровень</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php 
+            $medals = ['🥇', '🥈', '🥉'];
+            $index = 0;
+            foreach ($studentRating as $student): 
+            ?>
+            <tr>
+                <td><?= $medals[$index] ?? ($index + 1) . ' место' ?></td>
+                <td><strong><?= htmlspecialchars($student['last_name'] . ' ' . $student['first_name'] . ' ' . $student['middle_name']) ?></strong></td>
+                <td><?= htmlspecialchars($student['group_name']) ?></td>
+                <td><strong style="color: <?= getGradeColor($student['avg_grade']) ?>"><?= $student['avg_grade'] ?></strong></td>
+                <td><?= $student['grade_count'] ?></td>
+                <td>
+                    <?php if ($student['avg_grade'] >= 9): ?>
+                        <span class="badge badge-success">Отличник</span>
+                    <?php elseif ($student['avg_grade'] >= 7): ?>
+                        <span class="badge badge-info">Хорошист</span>
+                    <?php else: ?>
+                        <span class="badge badge-warning">Удовл.</span>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <?php 
+            $index++;
+            endforeach; 
+            ?>
+        </tbody>
+    </table>
+</div>
+
+<!-- Статистика по дисциплинам -->
+<div class="table-container">
+    <div class="table-header">
+        <h2>📚 Статистика по дисциплинам</h2>
+    </div>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Дисциплина</th>
+                <th>Средний балл</th>
+                <th>Оценок</th>
+                <th>Мин</th>
+                <th>Макс</th>
+                <th>Разброс</th>
+            </tr>
+        </thead>
+        <tbody>
+            <?php foreach ($disciplineStats as $discipline): 
+                $range = $discipline['max_grade'] - $discipline['min_grade'];
+            ?>
+            <tr>
+                <td><strong><?= htmlspecialchars($discipline['discipline_name']) ?></strong></td>
+                <td><strong style="color: <?= getGradeColor($discipline['avg_grade']) ?>"><?= $discipline['avg_grade'] ?></strong></td>
+                <td><?= $discipline['grade_count'] ?></td>
+                <td><span class="badge badge-danger"><?= $discipline['min_grade'] ?></span></td>
+                <td><span class="badge badge-success"><?= $discipline['max_grade'] ?></span></td>
+                <td>
+                    <?php if ($range <= 2): ?>
+                        <span class="badge badge-success">Стабильно</span>
+                    <?php elseif ($range <= 4): ?>
+                        <span class="badge badge-warning">Средне</span>
+                    <?php else: ?>
+                        <span class="badge badge-danger">Большой</span>
+                    <?php endif; ?>
+                </td>
+            </tr>
+            <?php endforeach; ?>
+        </tbody>
+    </table>
+</div>
+
+<script>
+// График топ групп
+const topGroupsCtx = document.getElementById('topGroupsChart');
+if (topGroupsCtx) {
+    new Chart(topGroupsCtx, {
+        type: 'bar',
+        data: {
+            labels: topGroupsCtx.dataset.labels ? JSON.parse(topGroupsCtx.dataset.labels) : [],
+            datasets: [{
+                label: 'Средний балл',
+                data: topGroupsCtx.dataset.data ? JSON.parse(topGroupsCtx.dataset.data) : [],
+                backgroundColor: [
+                    'rgba(40, 167, 69, 0.8)',
+                    'rgba(23, 162, 184, 0.8)',
+                    'rgba(255, 193, 7, 0.8)',
+                    'rgba(220, 53, 69, 0.8)',
+                    'rgba(102, 126, 234, 0.8)'
+                ]
+            }]
         },
-        plugins: {
-            legend: { position: 'bottom' }
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            scales: {
+                y: {
+                    beginAtZero: true,
+                    max: 10
+                }
+            }
         }
-    }
-});
+    });
+}
 </script>
 
-<?php include BASE_PATH . '/includes/footer.php'; ?>
+<?php include '../../includes/footer.php'; ?>

@@ -1,22 +1,12 @@
 <?php
 /**
  * Страница входа в систему
- * Система оценки успеваемости ПолесГУ
  */
-
-// Старт сессии
-session_start();
-
-// Подключение конфигурации
-require_once __DIR__ . '/../../config/app_config.php';
-
-// Если уже авторизован - перенаправляем на главную
-if (isLoggedIn()) {
-    header('Location: ' . BASE_URL . '/index.php');
-    exit;
-}
+require_once '../../config/db_config.php';
+require_once '../../config/app_config.php';
 
 $error = '';
+$success = '';
 
 // Обработка формы входа
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
@@ -26,29 +16,25 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($username) || empty($password)) {
         $error = 'Введите логин и пароль';
     } else {
-        // Поиск пользователя (без хэширования, как требуется)
-        $user = dbFetchOne(
-            "SELECT id, username, password, full_name, email, role 
-             FROM users 
-             WHERE username = ? AND password = ?",
-            [$username, $password]
-        );
-        
-        if ($user) {
-            // Успешный вход
-            $_SESSION['user_id'] = $user['id'];
-            $_SESSION['username'] = $user['username'];
-            $_SESSION['full_name'] = $user['full_name'];
-            $_SESSION['role'] = $user['role'];
-            $_SESSION['last_activity'] = time();
+        try {
+            $pdo = getDBConnection();
+            $stmt = $pdo->prepare("SELECT * FROM users WHERE username = ? AND is_active = 1");
+            $stmt->execute([$username]);
+            $user = $stmt->fetch();
             
-            // Генерация CSRF токена
-            generateCsrfToken();
-            
-            header('Location: ' . BASE_URL . '/index.php');
-            exit;
-        } else {
-            $error = 'Неверный логин или пароль';
+            if ($user && $user['password'] === $password) { // Без хэширования по требованию
+                $_SESSION['user_id'] = $user['id'];
+                $_SESSION['username'] = $user['username'];
+                $_SESSION['full_name'] = $user['full_name'];
+                $_SESSION['user_role'] = $user['role'];
+                
+                header('Location: ../../index.php');
+                exit;
+            } else {
+                $error = 'Неверный логин или пароль';
+            }
+        } catch (PDOException $e) {
+            $error = 'Ошибка базы данных';
         }
     }
 }
@@ -58,264 +44,162 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Вход в систему - <?php echo APP_NAME; ?></title>
-    
-    <!-- Подключение шрифтов -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    
-    <!-- Иконки Font Awesome -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-    
+    <title>Вход в систему - <?= APP_NAME ?></title>
+    <link rel="stylesheet" href="../../assets/css/style.css">
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-        
         body {
-            font-family: 'Inter', sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
-            padding: 20px;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
         }
-        
         .login-container {
-            background: #fff;
-            border-radius: 20px;
-            box-shadow: 0 25px 50px rgba(0,0,0,0.2);
-            overflow: hidden;
+            background: white;
+            padding: 40px;
+            border-radius: 15px;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
             width: 100%;
-            max-width: 450px;
-            animation: fadeIn 0.5s ease;
+            max-width: 420px;
         }
-        
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(-20px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-        
         .login-header {
-            background: linear-gradient(135deg, #4f46e5, #7c3aed);
-            padding: 40px 30px;
             text-align: center;
-            color: #fff;
+            margin-bottom: 30px;
         }
-        
-        .logo {
-            font-size: 48px;
-            margin-bottom: 15px;
-        }
-        
         .login-header h1 {
+            color: #333;
             font-size: 24px;
-            font-weight: 700;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
         }
-        
         .login-header p {
+            color: #666;
             font-size: 14px;
-            opacity: 0.9;
         }
-        
-        .login-body {
-            padding: 40px 30px;
-        }
-        
         .form-group {
-            margin-bottom: 25px;
+            margin-bottom: 20px;
         }
-        
         .form-group label {
             display: block;
             margin-bottom: 8px;
+            color: #333;
             font-weight: 500;
-            color: #1e293b;
-            font-size: 14px;
         }
-        
-        .input-wrapper {
-            position: relative;
-        }
-        
-        .input-wrapper i {
-            position: absolute;
-            left: 16px;
-            top: 50%;
-            transform: translateY(-50%);
-            color: #94a3b8;
-            font-size: 18px;
-        }
-        
-        .form-control {
+        .form-group input {
             width: 100%;
-            padding: 14px 16px 14px 48px;
-            border: 2px solid #e2e8f0;
-            border-radius: 12px;
-            font-size: 15px;
-            transition: all 0.3s ease;
+            padding: 12px 15px;
+            border: 2px solid #e1e1e1;
+            border-radius: 8px;
+            font-size: 14px;
+            transition: border-color 0.3s;
+            box-sizing: border-box;
         }
-        
-        .form-control:focus {
+        .form-group input:focus {
             outline: none;
-            border-color: #4f46e5;
-            box-shadow: 0 0 0 4px rgba(79, 70, 229, 0.1);
+            border-color: #667eea;
         }
-        
         .btn-login {
             width: 100%;
             padding: 14px;
-            background: linear-gradient(135deg, #4f46e5, #7c3aed);
-            color: #fff;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
             border: none;
-            border-radius: 12px;
+            border-radius: 8px;
             font-size: 16px;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.3s ease;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            gap: 10px;
+            transition: transform 0.2s, box-shadow 0.2s;
         }
-        
         .btn-login:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 25px rgba(79, 70, 229, 0.4);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
         }
-        
-        .error-message {
-            background: #fee2e2;
-            color: #dc2626;
-            padding: 14px 18px;
-            border-radius: 12px;
-            margin-bottom: 25px;
-            display: flex;
-            align-items: center;
-            gap: 10px;
+        .alert {
+            padding: 12px 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
             font-size: 14px;
-            border-left: 4px solid #dc2626;
         }
-        
-        .demo-credentials {
-            background: #f1f5f9;
-            padding: 20px;
-            border-radius: 12px;
-            margin-top: 25px;
+        .alert-error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
         }
-        
-        .demo-credentials h4 {
-            font-size: 14px;
-            color: #475569;
-            margin-bottom: 12px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
         }
-        
-        .demo-credentials ul {
-            list-style: none;
-            font-size: 13px;
-            color: #64748b;
-        }
-        
-        .demo-credentials li {
-            padding: 6px 0;
-            display: flex;
-            gap: 8px;
-        }
-        
-        .demo-credentials code {
-            background: #fff;
-            padding: 2px 8px;
-            border-radius: 4px;
-            font-family: 'Courier New', monospace;
-            color: #4f46e5;
-        }
-        
-        .footer {
-            text-align: center;
+        .system-info {
             margin-top: 30px;
-            color: #94a3b8;
+            padding-top: 20px;
+            border-top: 1px solid #e1e1e1;
+            text-align: center;
             font-size: 13px;
+            color: #666;
+        }
+        .demo-credentials {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-top: 20px;
+            font-size: 13px;
+        }
+        .demo-credentials h4 {
+            margin: 0 0 10px 0;
+            color: #333;
+        }
+        .demo-credentials p {
+            margin: 5px 0;
+            color: #666;
+        }
+        .demo-credentials code {
+            background: #e9ecef;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: monospace;
         }
     </style>
 </head>
 <body>
     <div class="login-container">
         <div class="login-header">
-            <div class="logo">
-                <i class="fas fa-graduation-cap"></i>
-            </div>
-            <h1>ПолесГУ</h1>
-            <p>Инженерный факультет</p>
+            <h1><?= APP_NAME ?></h1>
+            <p><?= APP_SUBTITLE ?></p>
         </div>
         
-        <div class="login-body">
-            <?php if ($error): ?>
-            <div class="error-message">
-                <i class="fas fa-exclamation-circle"></i>
-                <span><?php echo e($error); ?></span>
+        <?php if ($error): ?>
+            <div class="alert alert-error"><?= htmlspecialchars($error) ?></div>
+        <?php endif; ?>
+        
+        <?php if ($success): ?>
+            <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
+        <?php endif; ?>
+        
+        <form method="POST" action="">
+            <div class="form-group">
+                <label for="username">Логин</label>
+                <input type="text" id="username" name="username" required autofocus placeholder="Введите ваш логин">
             </div>
-            <?php endif; ?>
             
-            <form method="POST" action="">
-                <div class="form-group">
-                    <label for="username"><i class="fas fa-user"></i> Логин</label>
-                    <div class="input-wrapper">
-                        <i class="fas fa-user"></i>
-                        <input type="text" 
-                               id="username" 
-                               name="username" 
-                               class="form-control" 
-                               placeholder="Введите логин"
-                               value="<?php echo e($_POST['username'] ?? ''); ?>"
-                               required 
-                               autofocus>
-                    </div>
-                </div>
-                
-                <div class="form-group">
-                    <label for="password"><i class="fas fa-lock"></i> Пароль</label>
-                    <div class="input-wrapper">
-                        <i class="fas fa-lock"></i>
-                        <input type="password" 
-                               id="password" 
-                               name="password" 
-                               class="form-control" 
-                               placeholder="Введите пароль"
-                               required>
-                    </div>
-                </div>
-                
-                <button type="submit" class="btn-login">
-                    <i class="fas fa-sign-in-alt"></i>
-                    Войти в систему
-                </button>
-            </form>
-            
-            <div class="demo-credentials">
-                <h4><i class="fas fa-info-circle"></i> Тестовые учетные записи:</h4>
-                <ul>
-                    <li><strong>Администратор:</strong> <code>admin</code> / <code>admin123</code></li>
-                    <li><strong>Преподаватель:</strong> <code>petrov</code> / <code>petrov123</code></li>
-                    <li><strong>Преподаватель:</strong> <code>sidorova</code> / <code>sidorova123</code></li>
-                </ul>
+            <div class="form-group">
+                <label for="password">Пароль</label>
+                <input type="password" id="password" name="password" required placeholder="Введите ваш пароль">
             </div>
+            
+            <button type="submit" class="btn-login">Войти в систему</button>
+        </form>
+        
+        <div class="demo-credentials">
+            <h4>📋 Тестовые учетные записи:</h4>
+            <p><strong>Администратор:</strong> <code>admin</code> / <code>admin123</code></p>
+            <p><strong>Преподаватель:</strong> <code>petrov</code> / <code>petrov123</code></p>
         </div>
-    </div>
-    
-    <div class="footer">
-        <p>Система оценки успеваемости &copy; <?php echo date('Y'); ?> ПолесГУ</p>
+        
+        <div class="system-info">
+            <p>© 2025 Полесский государственный университет</p>
+            <p>Инженерный факультет</p>
+        </div>
     </div>
 </body>
 </html>

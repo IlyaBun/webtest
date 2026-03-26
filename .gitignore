@@ -1,7 +1,6 @@
 ```
 # Dependencies
-vendor/
-composer.lock
+node_modules/
 
 # Environment
 .env
@@ -11,11 +10,66 @@ composer.lock
 # Logs
 *.log
 
-# IDE
+# Temporary files
+*.tmp
+*.swp
+
+# Build artifacts
+dist/
+build/
+target/
+
+# Python specific
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.py~
+
+# PHP specific
+*.php~
+*.php.bak
+
+# IDE specific
 .vscode/
 .idea/
+*.swp
+*.swo
 
-# OS
+# OS specific
 .DS_Store
 Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Database
+*.sqlite
+*.db
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
 ```
